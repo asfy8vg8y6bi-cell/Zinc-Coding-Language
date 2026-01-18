@@ -1,16 +1,16 @@
 # Zinc Programming Language
 
-# computer go brrrrr
+Computer go brrrrrrrrr
 
 
-**Zinc** is a programming language with C semantics but with **English syntax**. It has a transpiler and compiler. The compiler has been tested, but I have not included instructions for it because I am lazy.
+**Zinc** is a programming language with C semantics but with **English syntax**. At the bottom are instructions for the LLVM compiler.
 
 ## Quick Start
 
 ### Prerequisites
 
 - Python 3.6+
-- GCC (or any C compiler)
+- GCC (or any C compiler) (For transpiler)
 
 ### Hello World
 
@@ -30,7 +30,7 @@ Compile and run:
 python zinc.py hello.zn --run
 ```
 
-### Usage
+### Usage (Transpiler)
 
 ```bash
 python zinc.py <file.zn>              # Compile to executable
@@ -124,9 +124,104 @@ Check the `examples/` directory for complete programs:
 
 See [INSTRUCTIONS.md](INSTRUCTIONS.md) for the complete language reference with all 20 examples.
 
+## LLVM Compiler
+
+As an alternative to the C transpiler, Zinc includes an LLVM-based compiler in the `compiler/` directory. This is a **true compiler** that generates native machine code - no interpretation involved.
+
+### Prerequisites
+
+```bash
+pip install llvmlite
+```
+
+Also requires gcc or clang for linking.
+
+### Compiling with LLVM
+
+```bash
+python compiler/zinc_vm.py hello.zn              # Compile to native executable
+python compiler/zinc_vm.py hello.zn -o hello     # Specify output name
+python compiler/zinc_vm.py hello.zn --run        # Compile and run immediately
+python compiler/zinc_vm.py hello.zn --emit-llvm  # Output LLVM IR
+python compiler/zinc_vm.py hello.zn --emit-object # Output object file (.o)
+python compiler/zinc_vm.py hello.zn --disassemble # Show bytecode IR (intermediate)
+```
+
+### Compiler Options
+
+| Option | Description |
+|--------|-------------|
+| `-o <file>` | Specify output file name |
+| `--run`, `-r` | Compile and run immediately |
+| `--emit-llvm` | Output LLVM IR instead of executable |
+| `--emit-object` | Output object file (.o) instead of executable |
+| `--disassemble`, `-d` | Show bytecode intermediate representation |
+| `-O <0-3>` | Optimization level (default: 2) |
+
+### Using as a Python Module
+
+```python
+from compiler import compile_program
+from compiler.llvm_codegen import compile_to_executable
+
+source_code = '''
+include the standard input and output
+
+to do the main thing:
+    say "Hello from LLVM!"
+end
+'''
+
+program = compile_program(source_code)
+compile_to_executable(program, "hello")
+```
+
+### Compilation Pipeline
+
+```
+Zinc Source (.zn)
+       |
+       v
+    [Parser] --> AST
+       |
+       v
+   [Compiler] --> Bytecode IR
+       |
+       v
+  [LLVM Codegen] --> LLVM IR
+       |
+       v
+    [LLVM] --> Object Code (.o)
+       |
+       v
+   [Linker] --> Native Executable
+```
+
+### Compiler Architecture
+
+The `compiler/` package contains:
+
+| File | Description |
+|------|-------------|
+| `bytecode.py` | Bytecode IR: instruction set (50+ opcodes), value types, data structures |
+| `compiler.py` | Frontend: AST to bytecode IR compiler |
+| `llvm_codegen.py` | Backend: bytecode IR to LLVM IR code generator |
+| `zinc_vm.py` | Command-line interface |
+| `__init__.py` | Package exports |
+
+### LLVM Compiler vs C Transpiler
+
+| Feature | LLVM Compiler (`compiler/`) | C Transpiler (`zinc.py`) |
+|---------|----------------------------|-------------------------|
+| Backend | LLVM | GCC/Clang via C |
+| Output | Native executable | Native executable |
+| Optimization | LLVM optimizations (-O0 to -O3) | C compiler optimizations |
+| Intermediate | Bytecode IR + LLVM IR | C source code |
+| Dependencies | llvmlite + linker | C compiler |
+
 ## Philosophy
 
-- Reads like **English sentences**
+- Reads like **English**
 - No symbols except for strings and numbers
 - A non-programmer should understand it
 - C semantics under the hood for performance
