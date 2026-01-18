@@ -3,7 +3,7 @@
 # computer go brrrrr
 
 
-**Zinc** is a programming language with C semantics but with **English syntax**. It has a transplier and compiler. 
+**Zinc** is a programming language with C semantics but with **English syntax**. It has a transpiler and compiler. The compiler has been tested, but I have not included instructions for it because I am lazy.
 
 ## Quick Start
 
