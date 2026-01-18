@@ -1,21 +1,26 @@
 #!/usr/bin/env python3
 """
-Zinc VM Compiler - A bytecode virtual machine for the Zinc language.
+Zinc Compiler - Compiles Zinc source code to native executables via LLVM.
 
-This is an alternative to the C transpiler that executes Zinc programs
-directly using a stack-based virtual machine.
+This is a true compiler that uses LLVM to generate native machine code.
+It does NOT interpret - it produces standalone executables.
 
 Usage:
-    python zinc_vm.py <file.zn>                 # Compile and run
-    python zinc_vm.py <file.zn> --disassemble   # Show bytecode disassembly
-    python zinc_vm.py <file.zn> --debug         # Run with debug output
-    python zinc_vm.py <file.zn> --emit-bytecode # Output bytecode to file
+    python zinc_vm.py <file.zn>                 # Compile to native executable
+    python zinc_vm.py <file.zn> -o <name>       # Specify output name
+    python zinc_vm.py <file.zn> --emit-llvm     # Output LLVM IR
+    python zinc_vm.py <file.zn> --emit-object   # Output object file
+    python zinc_vm.py <file.zn> --run           # Compile and run immediately
+    python zinc_vm.py <file.zn> --disassemble   # Show bytecode (intermediate)
+
+Requires: llvmlite (pip install llvmlite)
 """
 
 import sys
 import os
 import argparse
-import pickle
+import subprocess
+import tempfile
 from pathlib import Path
 
 # Add parent directory to path for parser imports
@@ -24,20 +29,31 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from compiler import compile_program
-from vm import run_program
 
 
-def run_zinc_vm(source_file: str, disassemble: bool = False, debug: bool = False,
-                emit_bytecode: bool = False, output_file: str = None) -> int:
+def check_llvm_available():
+    """Check if llvmlite is available."""
+    try:
+        import llvmlite
+        return True
+    except ImportError:
+        return False
+
+
+def compile_zinc(source_file: str, output_file: str = None, emit_llvm: bool = False,
+                 emit_object: bool = False, disassemble: bool = False,
+                 run: bool = False, opt_level: int = 2) -> int:
     """
-    Compile and run a Zinc source file using the bytecode VM.
+    Compile a Zinc source file to a native executable.
 
     Args:
         source_file: Path to the .zn file
+        output_file: Path for output (executable, .ll, or .o)
+        emit_llvm: If True, output LLVM IR instead of executable
+        emit_object: If True, output object file instead of executable
         disassemble: If True, show bytecode disassembly
-        debug: If True, enable debug output during execution
-        emit_bytecode: If True, save compiled bytecode to file
-        output_file: Path for bytecode output (optional)
+        run: If True, compile and run immediately
+        opt_level: Optimization level (0-3)
 
     Returns:
         Exit code (0 for success)
@@ -53,7 +69,7 @@ def run_zinc_vm(source_file: str, disassemble: bool = False, debug: bool = False
         print(f"Error reading file: {e}", file=sys.stderr)
         return 1
 
-    # Compile to bytecode
+    # Compile to bytecode (intermediate representation)
     try:
         compiled = compile_program(source)
     except SyntaxError as e:
@@ -65,121 +81,138 @@ def run_zinc_vm(source_file: str, disassemble: bool = False, debug: bool = False
         traceback.print_exc()
         return 1
 
-    # Show disassembly if requested
+    # Show disassembly if requested (bytecode intermediate)
     if disassemble:
         print(compiled.disassemble())
         return 0
 
-    # Save bytecode if requested
-    if emit_bytecode:
-        source_path = Path(source_file)
-        if output_file:
-            bytecode_file = Path(output_file)
-        else:
-            bytecode_file = source_path.with_suffix('.znc')
+    # Check for LLVM
+    if not check_llvm_available():
+        print("Error: llvmlite not installed.", file=sys.stderr)
+        print("Install with: pip install llvmlite", file=sys.stderr)
+        return 1
 
+    # Import LLVM codegen
+    from llvm_codegen import (
+        compile_to_llvm, compile_to_object, compile_to_executable,
+        get_llvm_ir, init_llvm
+    )
+
+    source_path = Path(source_file)
+
+    # Emit LLVM IR
+    if emit_llvm:
         try:
-            with open(bytecode_file, 'wb') as f:
-                pickle.dump(compiled, f)
-            print(f"Bytecode saved to: {bytecode_file}")
-        except IOError as e:
-            print(f"Error saving bytecode: {e}", file=sys.stderr)
+            init_llvm()
+            llvm_ir = get_llvm_ir(compiled)
+            if output_file:
+                with open(output_file, 'w') as f:
+                    f.write(llvm_ir)
+                print(f"LLVM IR written to: {output_file}")
+            else:
+                print(llvm_ir)
+            return 0
+        except Exception as e:
+            print(f"Error generating LLVM IR: {e}", file=sys.stderr)
             return 1
+
+    # Emit object file
+    if emit_object:
+        try:
+            obj_file = output_file or str(source_path.with_suffix('.o'))
+            compile_to_object(compiled, obj_file, opt_level)
+            print(f"Object file written to: {obj_file}")
+            return 0
+        except Exception as e:
+            print(f"Error generating object file: {e}", file=sys.stderr)
+            return 1
+
+    # Compile to executable
+    try:
+        if output_file:
+            exe_file = output_file
+        else:
+            # Default executable name
+            if sys.platform == 'win32':
+                exe_file = str(source_path.with_suffix('.exe'))
+            else:
+                exe_file = str(source_path.with_suffix(''))
+
+        compile_to_executable(compiled, exe_file, opt_level)
+        print(f"Compiled: {exe_file}")
+
+        # Run if requested
+        if run:
+            print(f"Running: {exe_file}")
+            print("-" * 40)
+            try:
+                result = subprocess.run([exe_file], check=False)
+                return result.returncode
+            except Exception as e:
+                print(f"Error running executable: {e}", file=sys.stderr)
+                return 1
+
         return 0
 
-    # Run the program
-    try:
-        exit_code = run_program(compiled, debug=debug)
-        return exit_code
-    except KeyboardInterrupt:
-        print("\nProgram interrupted.")
-        return 130
-    except Exception as e:
-        print(f"Runtime error: {e}", file=sys.stderr)
-        if debug:
-            import traceback
-            traceback.print_exc()
-        return 1
-
-
-def run_bytecode_file(bytecode_file: str, debug: bool = False) -> int:
-    """
-    Run a pre-compiled bytecode file.
-
-    Args:
-        bytecode_file: Path to the .znc file
-        debug: If True, enable debug output
-
-    Returns:
-        Exit code (0 for success)
-    """
-    try:
-        with open(bytecode_file, 'rb') as f:
-            compiled = pickle.load(f)
-    except FileNotFoundError:
-        print(f"Error: File not found: {bytecode_file}", file=sys.stderr)
+    except subprocess.CalledProcessError as e:
+        print(f"Linker error: {e}", file=sys.stderr)
         return 1
     except Exception as e:
-        print(f"Error loading bytecode: {e}", file=sys.stderr)
-        return 1
-
-    try:
-        return run_program(compiled, debug=debug)
-    except KeyboardInterrupt:
-        print("\nProgram interrupted.")
-        return 130
-    except Exception as e:
-        print(f"Runtime error: {e}", file=sys.stderr)
+        print(f"Compilation error: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
         return 1
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Zinc VM - Bytecode virtual machine for the Zinc language',
+        description='Zinc Compiler - Compiles Zinc to native executables via LLVM',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='''
 Examples:
-  python zinc_vm.py hello.zn                Run hello.zn in the VM
-  python zinc_vm.py hello.zn --disassemble  Show bytecode disassembly
-  python zinc_vm.py hello.zn --debug        Run with debug output
-  python zinc_vm.py hello.zn --emit-bytecode  Save bytecode to hello.znc
-  python zinc_vm.py hello.znc               Run pre-compiled bytecode
+  python zinc_vm.py hello.zn              Compile hello.zn to executable
+  python zinc_vm.py hello.zn -o hello     Specify output name
+  python zinc_vm.py hello.zn --run        Compile and run immediately
+  python zinc_vm.py hello.zn --emit-llvm  Output LLVM IR
+  python zinc_vm.py hello.zn --emit-object Output object file (.o)
+  python zinc_vm.py hello.zn --disassemble Show bytecode (intermediate)
 
-The Zinc VM executes programs directly without compiling to C.
-This makes it portable and easier to debug, though potentially slower
-than the native C compiler for compute-intensive programs.
+The Zinc compiler uses LLVM to generate optimized native machine code.
+This produces standalone executables with no runtime dependencies.
+
+Requirements:
+  - llvmlite: pip install llvmlite
+  - A C linker (gcc or clang) for final executable linking
 '''
     )
 
-    parser.add_argument('source', help='Zinc source file (.zn) or bytecode file (.znc)')
+    parser.add_argument('source', help='Zinc source file (.zn)')
+    parser.add_argument('-o', '--output', help='Output file name')
+    parser.add_argument('--emit-llvm', action='store_true',
+                        help='Output LLVM IR instead of executable')
+    parser.add_argument('--emit-object', action='store_true',
+                        help='Output object file instead of executable')
     parser.add_argument('--disassemble', '-d', action='store_true',
-                        help='Show bytecode disassembly instead of running')
-    parser.add_argument('--debug', action='store_true',
-                        help='Enable debug output during execution')
-    parser.add_argument('--emit-bytecode', '-c', action='store_true',
-                        help='Compile and save bytecode to file')
-    parser.add_argument('-o', '--output', help='Output file for bytecode')
+                        help='Show bytecode disassembly (intermediate representation)')
+    parser.add_argument('--run', '-r', action='store_true',
+                        help='Compile and run immediately')
+    parser.add_argument('-O', '--optimize', type=int, default=2, choices=[0, 1, 2, 3],
+                        help='Optimization level (default: 2)')
 
     args = parser.parse_args()
-
-    # Check if it's a bytecode file
-    if args.source.endswith('.znc'):
-        if args.disassemble or args.emit_bytecode:
-            print("Error: Cannot disassemble or emit bytecode from a bytecode file",
-                  file=sys.stderr)
-            return 1
-        return run_bytecode_file(args.source, debug=args.debug)
 
     # Validate source file
     if not args.source.endswith('.zn'):
         print(f"Warning: Source file does not have .zn extension", file=sys.stderr)
 
-    return run_zinc_vm(
+    return compile_zinc(
         args.source,
+        output_file=args.output,
+        emit_llvm=args.emit_llvm,
+        emit_object=args.emit_object,
         disassemble=args.disassemble,
-        debug=args.debug,
-        emit_bytecode=args.emit_bytecode,
-        output_file=args.output
+        run=args.run,
+        opt_level=args.optimize
     )
 
 
