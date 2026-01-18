@@ -1,6 +1,9 @@
 # Zinc Programming Language
 
-**Zinc** is a programming language with C semantics but **pure natural English syntax**. It reads like you're giving instructions to a person.
+# computer go brrrrr
+
+
+**Zinc** is a programming language with C semantics but with **English syntax**. 
 
 ## Quick Start
 
@@ -123,7 +126,8 @@ See [INSTRUCTIONS.md](INSTRUCTIONS.md) for the complete language reference with 
 
 ## Philosophy
 
-- Reads like **actual English sentences**
+- Reads like **English sentences**
 - No symbols except for strings and numbers
 - A non-programmer should understand it
 - C semantics under the hood for performance
+- Why not?
